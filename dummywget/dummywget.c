@@ -52,18 +52,20 @@ int main(int argc, char *argv[]){
   int call_ret;
   char *http_req = "GET / HTTP/1.1\n";
 
-  int sockfd, portno, rcv;
-  struct sockaddr_in serv_addr;
-  char *servername;
+  int sockfd, rcv;
+  struct addrinfo hints, *result, *rp;
   char buffer[10000];
   total_rcv = 0;
-  bzero(buffer, 10000);
-  bzero((char *) &serv_addr, sizeof(serv_addr));
+  memset(buffer, 0, 10000);
+  memset(&hints, 0, sizeof(struct addrinfo));
   if (argc < 3){
     fprintf(stderr, "Syntax:\t%s hostname port\n", argv[0]);
     exit(0);
   }
-  portno = atoi(argv[2]);
+  hints.ai_family = AF_UNSPEC;
+  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_flags = 0;
+  hints.ai_protocol = 0;
 
   // Creates the new display thread
   call_ret = pthread_create(&display_th, NULL, refresh_display, (void *)(&total_rcv));
@@ -71,21 +73,24 @@ int main(int argc, char *argv[]){
     error("ERROR creating a new thread");
 
   // Open the socket at the given url
-  sockfd = socket(AF_INET, SOCK_STREAM, 0);
-  if (sockfd <= 2)
-    error("ERROR opening the socket");
-  servername = (char *)gethostbyname(argv[1]);
-  if (servername == NULL){
-    fprintf(stderr, "ERROR, no such host\n");
+  call_ret = getaddrinfo(argv[1], argv[2], &hints, &result);
+  if (call_ret){
+    fprintf(stderr, "ERROR: getaddrinfo: %s\n", gai_strerror(call_ret));
     exit(0);
   }
-  //bcopy((char *)(server->h_addr), (char *)&(serv_addr.sin_addr.s_addr), server->h_length);
-  inet_pton(AF_INET, servername, &serv_addr.sin_addr);
-  serv_addr.sin_family = AF_INET;
-  serv_addr.sin_port = htons(portno);
-  
-  if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
-    error("ERROR connecting");
+  for (rp = result; rp != NULL; rp = rp->ai_next){
+    sockfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+    if (sockfd < 0)
+      continue;
+    if (connect(sockfd, rp->ai_addr, rp->ai_addrlen) != -1)
+      break;
+    close(sockfd);
+  }
+  if (rp == NULL){
+    fprintf(stderr, "ERROR: could not connect\n");
+    exit(0);
+  }  
+  freeaddrinfo(result);
 
   // Send the request
   if (send(sockfd, http_req, strlen(http_req), 0) < 0){
@@ -99,9 +104,7 @@ int main(int argc, char *argv[]){
       if (errno == EINTR)
         continue;
       else {
-        printf("BITE86\n");fflush(stdout);//DEBUG
         error("ERROR reading the socket");
-        exit(0);
       }
     }
     total_rcv += rcv;
