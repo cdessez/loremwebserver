@@ -10,6 +10,8 @@
 #include <arpa/inet.h>
 #include <time.h>
 
+static int keep_running = 1;
+
 
 void error(char *msg){
   perror(msg);
@@ -20,25 +22,28 @@ void error(char *msg){
 
 void *refresh_display(void *data_counter){
 
-  clock_t init_ts, prev_ts, ts;
+  time_t cur_time, init_time, prev_time;
   unsigned long *counter, prev_count, count, count_mb;
   double avg_rate, rate;
   counter = (unsigned long *)data_counter;
-  init_ts = clock();
-  prev_ts = init_ts;
   prev_count = 0;
-  while(1){
-    sleep(1);
-    ts = clock();
+  time(&init_time);
+  prev_time = init_time;
+  sleep(1);
+  while(keep_running){
+    time(&cur_time);
     count = *counter;
     count_mb = count >> 20;
-    rate = (double)((count - prev_count) * CLOCKS_PER_SEC) / (double)(ts - prev_ts) * 8.0;
-    avg_rate = (double)(count * CLOCKS_PER_SEC) / (double)(ts - init_ts) * 8.0;
-    printf("\rTot=  %ld MB     Avg=  %ld Mbps     Inst=  %ld Mbps", 
-        count_mb, ((long)avg_rate) >> 20, ((long)rate) >> 20);
+    rate = (double)((count - prev_count) * 8)
+            / (double)(cur_time - prev_time);
+    avg_rate = (double)(count * 8) / (double)(cur_time - init_time);
+    printf("\rTot=  %ld MB / %ld s     Avg=  %ld Mbps     Inst=  %ld Mbps", 
+        count_mb, cur_time - init_time, 
+        (long)avg_rate >> 20, (long)rate >> 20);
     fflush(stdout);
     prev_count = count;
-    prev_ts = ts;
+    prev_time = cur_time;
+    sleep(1);
   }
 
   pthread_exit(NULL);
@@ -48,15 +53,16 @@ void *refresh_display(void *data_counter){
 int main(int argc, char *argv[]){
 
   unsigned long total_rcv;
+  long rcv;
   pthread_t display_th;
   int call_ret;
   char *http_req = "GET / HTTP/1.1\n";
 
-  int sockfd, rcv;
+  int sockfd;
   struct addrinfo hints, *result, *rp;
-  char buffer[10000];
+  char buffer[1000000];
   total_rcv = 0;
-  memset(buffer, 0, 10000);
+  memset(buffer, 0, 1000000);
   memset(&hints, 0, sizeof(struct addrinfo));
   if (argc < 3){
     fprintf(stderr, "Syntax:\t%s hostname port\n", argv[0]);
@@ -68,7 +74,8 @@ int main(int argc, char *argv[]){
   hints.ai_protocol = 0;
 
   // Creates the new display thread
-  call_ret = pthread_create(&display_th, NULL, refresh_display, (void *)(&total_rcv));
+  call_ret = pthread_create(&display_th, NULL, refresh_display, 
+                              (void *)(&total_rcv));
   if (call_ret)
     error("ERROR creating a new thread");
 
@@ -99,13 +106,17 @@ int main(int argc, char *argv[]){
 
   // Read and discard the input indefinitely
   while(1){
-    rcv = recv(sockfd, buffer, 10000, 0);
+    rcv = (long)recv(sockfd, buffer, 1000000, 0);
     if (rcv < 0){
       if (errno == EINTR)
         continue;
       else {
         error("ERROR reading the socket");
       }
+    } else if(rcv == 0){
+      keep_running = 0;
+      printf("\nThe connection was broken\n");
+      break;
     }
     total_rcv += rcv;
   }
