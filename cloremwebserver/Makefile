@@ -1,4 +1,4 @@
-CFLAGS=-Wall -g #-lsocket
+CFLAGS=-Wall -g -pthread #-lsocket
 CC=gcc
 
 TARGETS=cloremwebserver
